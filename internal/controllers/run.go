@@ -213,7 +213,7 @@ func (r *RunController) checkTimeout(ctx context.Context, t *v1alpha1.Task, run 
 		f = finish{phase: v1alpha1.TaskCancelled, reason: ReasonCancelled, end: v1alpha1.RunCancelled}
 	}
 	r.log.InfoContext(ctx, "run timed out", "task", t.Metadata.ID, "run", run.Metadata.Name, "limit", limit)
-	// TODO(RT-S2-T02): the scheduler revokes the lease of a task that left Leased/Running.
+	// The scheduler revokes the lease of a task that left Leased/Running (internal/scheduler).
 	return Result{}, r.finish(ctx, t, run, f)
 }
 
