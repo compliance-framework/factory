@@ -29,7 +29,7 @@ const (
 )
 
 // KillSwitches reports the pause flags. The pause/resume commands set them in the store
-// (RT-S2-T03); until then NoKillSwitches is the default and only the StopLabel stops an item.
+// (StoreKillSwitches, the rule controller's default); NoKillSwitches pauses nothing.
 type KillSwitches interface {
 	// Paused reports whether scope/name (name is empty for ScopeGlobal) is paused.
 	Paused(ctx context.Context, scope, name string) (bool, error)

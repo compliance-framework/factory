@@ -99,6 +99,7 @@ paths:
       description: Registered agents with their capabilities, lending and status.
       security:
         - uiSession: []
+        - cliToken: []
       parameters:
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
@@ -333,6 +334,7 @@ paths:
       description: Tasks, newest first.
       security:
         - uiSession: []
+        - cliToken: []
       parameters:
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
@@ -361,6 +363,7 @@ paths:
       security:
         - agentToken: []
         - uiSession: []
+        - cliToken: []
       responses:
         '200':
           description: The task.
@@ -457,6 +460,7 @@ paths:
       security:
         - uiSession: []
         - agentToken: []
+        - cliToken: []
       responses:
         '200':
           description: The transcript.
@@ -563,6 +567,7 @@ paths:
       description: Work items, most recently updated first.
       security:
         - uiSession: []
+        - cliToken: []
       parameters:
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
@@ -590,6 +595,7 @@ paths:
       description: The work item and the events, tasks, runs and effects of its timeline.
       security:
         - uiSession: []
+        - cliToken: []
       responses:
         '200':
           description: The work item.
@@ -613,6 +619,7 @@ paths:
       description: The run (progress, result, usage) and the effects it made.
       security:
         - uiSession: []
+        - cliToken: []
       responses:
         '200':
           description: The run.
@@ -634,6 +641,7 @@ paths:
       description: Each queue with its running tasks and its pending tasks and why they wait.
       security:
         - uiSession: []
+        - cliToken: []
       parameters:
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
@@ -659,6 +667,7 @@ paths:
       description: Each pool with the agents registered in it.
       security:
         - uiSession: []
+        - cliToken: []
       parameters:
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
@@ -684,6 +693,7 @@ paths:
       description: Each configured provider instance and its connection health.
       security:
         - uiSession: []
+        - cliToken: []
       parameters:
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
@@ -709,6 +719,7 @@ paths:
       description: The loaded catalog's commit, load status and errors, and the objects it holds.
       security:
         - uiSession: []
+        - cliToken: []
       responses:
         '200':
           description: The catalog summary.
@@ -742,6 +753,7 @@ paths:
       description: The object as loaded (templates substituted), in its v1alpha1 shape.
       security:
         - uiSession: []
+        - cliToken: []
       responses:
         '200':
           description: The object.
@@ -767,6 +779,7 @@ paths:
         empty one) and returns the Evaluation. Nothing is stored and no action is applied.
       security:
         - uiSession: []
+        - cliToken: []
       requestBody:
         description: The event to evaluate.
         required: true
@@ -844,6 +857,7 @@ paths:
         15 s.
       security:
         - uiSession: []
+        - cliToken: []
       parameters:
         - name: topics
           in: query
@@ -1142,7 +1156,9 @@ components:
     cliToken:
       type: http
       scheme: bearer
-      description: The static CLI admin token (`FACTORY_CLI_TOKEN`), for `factory dispatch`.
+      description: |
+        The static CLI admin token (`FACTORY_CLI_TOKEN`), for `factory dispatch`. A full admin:
+        accepted wherever a UI session is, except `getMe`.
     providerSignature:
       type: apiKey
       in: header

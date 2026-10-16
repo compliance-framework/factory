@@ -35,7 +35,7 @@ func TestPoC(t *testing.T) {
 		"prompts": len(c.Assets.Prompts), "schemas": len(c.Assets.Schemas),
 	} {
 		want := map[string]int{
-			"providers": 1, "groups": 1, "pools": 1, "queues": 1, "taskspecs": 5, "templates": 4,
+			"providers": 1, "groups": 2, "pools": 1, "queues": 1, "taskspecs": 5, "templates": 4,
 			"rules": 16, "rulesets": 5, "prompts": 5, "schemas": 5,
 		}[kind]
 		if got != want {

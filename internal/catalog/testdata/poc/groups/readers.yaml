@@ -1,0 +1,5 @@
+kind: Group
+metadata: { name: readers }
+spec:
+  members:
+    - { provider: github-public, orgRole: { org: compliance-framework, role: member } }   # any org member may read the Factory UI (api-server.md)

@@ -18,7 +18,8 @@ var (
 	// ErrUnsupported is an op or call this provider type can't do (a git-side effect op, a
 	// PR op on Slack, …).
 	ErrUnsupported = errors.New("provider: unsupported")
-	// ErrRetryable is a transient failure (rate limit, 5xx): the Effector API answers 503.
+	// ErrRetryable is a transient failure (rate limit, 5xx): the Effector API answers 429 with
+	// Retry-After.
 	// Adapters return it as a *RetryableError.
 	ErrRetryable = errors.New("provider: retryable")
 	// ErrUnknownType is a Provider type no registered adapter connects.

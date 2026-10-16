@@ -1751,6 +1751,8 @@ func (w *ServerInterfaceWrapper) ListAgents(ctx echo.Context) error {
 
 	ctx.Set(string(UiSessionScopes), []string{})
 
+	ctx.Set(string(CliTokenScopes), []string{})
+
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListAgentsParams
 	// ------------- Optional query parameter "cursor" -------------
@@ -1933,6 +1935,8 @@ func (w *ServerInterfaceWrapper) GetCatalog(ctx echo.Context) error {
 
 	ctx.Set(string(UiSessionScopes), []string{})
 
+	ctx.Set(string(CliTokenScopes), []string{})
+
 	// Invoke the callback with all the unmarshaled arguments
 	err = w.Handler.GetCatalog(ctx)
 	return err
@@ -1943,6 +1947,8 @@ func (w *ServerInterfaceWrapper) DryRunCatalog(ctx echo.Context) error {
 	var err error
 
 	ctx.Set(string(UiSessionScopes), []string{})
+
+	ctx.Set(string(CliTokenScopes), []string{})
 
 	// Invoke the callback with all the unmarshaled arguments
 	err = w.Handler.DryRunCatalog(ctx)
@@ -1969,6 +1975,8 @@ func (w *ServerInterfaceWrapper) GetCatalogObject(ctx echo.Context) error {
 	}
 
 	ctx.Set(string(UiSessionScopes), []string{})
+
+	ctx.Set(string(CliTokenScopes), []string{})
 
 	// Invoke the callback with all the unmarshaled arguments
 	err = w.Handler.GetCatalogObject(ctx, kind, name)
@@ -2048,6 +2056,8 @@ func (w *ServerInterfaceWrapper) ListPools(ctx echo.Context) error {
 
 	ctx.Set(string(UiSessionScopes), []string{})
 
+	ctx.Set(string(CliTokenScopes), []string{})
+
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListPoolsParams
 	// ------------- Optional query parameter "cursor" -------------
@@ -2082,6 +2092,8 @@ func (w *ServerInterfaceWrapper) ListProviders(ctx echo.Context) error {
 
 	ctx.Set(string(UiSessionScopes), []string{})
 
+	ctx.Set(string(CliTokenScopes), []string{})
+
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListProvidersParams
 	// ------------- Optional query parameter "cursor" -------------
@@ -2115,6 +2127,8 @@ func (w *ServerInterfaceWrapper) ListQueues(ctx echo.Context) error {
 	var err error
 
 	ctx.Set(string(UiSessionScopes), []string{})
+
+	ctx.Set(string(CliTokenScopes), []string{})
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListQueuesParams
@@ -2157,6 +2171,8 @@ func (w *ServerInterfaceWrapper) GetRun(ctx echo.Context) error {
 
 	ctx.Set(string(UiSessionScopes), []string{})
 
+	ctx.Set(string(CliTokenScopes), []string{})
+
 	// Invoke the callback with all the unmarshaled arguments
 	err = w.Handler.GetRun(ctx, id)
 	return err
@@ -2176,6 +2192,8 @@ func (w *ServerInterfaceWrapper) GetTranscript(ctx echo.Context) error {
 	ctx.Set(string(UiSessionScopes), []string{})
 
 	ctx.Set(string(AgentTokenScopes), []string{})
+
+	ctx.Set(string(CliTokenScopes), []string{})
 
 	// Invoke the callback with all the unmarshaled arguments
 	err = w.Handler.GetTranscript(ctx, id)
@@ -2205,6 +2223,8 @@ func (w *ServerInterfaceWrapper) StreamEvents(ctx echo.Context) error {
 	var err error
 
 	ctx.Set(string(UiSessionScopes), []string{})
+
+	ctx.Set(string(CliTokenScopes), []string{})
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params StreamEventsParams
@@ -2242,6 +2262,8 @@ func (w *ServerInterfaceWrapper) ListTasks(ctx echo.Context) error {
 	var err error
 
 	ctx.Set(string(UiSessionScopes), []string{})
+
+	ctx.Set(string(CliTokenScopes), []string{})
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListTasksParams
@@ -2285,6 +2307,8 @@ func (w *ServerInterfaceWrapper) GetTask(ctx echo.Context) error {
 	ctx.Set(string(AgentTokenScopes), []string{})
 
 	ctx.Set(string(UiSessionScopes), []string{})
+
+	ctx.Set(string(CliTokenScopes), []string{})
 
 	// Invoke the callback with all the unmarshaled arguments
 	err = w.Handler.GetTask(ctx, id)
@@ -2359,6 +2383,8 @@ func (w *ServerInterfaceWrapper) ListWorkItems(ctx echo.Context) error {
 
 	ctx.Set(string(UiSessionScopes), []string{})
 
+	ctx.Set(string(CliTokenScopes), []string{})
+
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListWorkItemsParams
 	// ------------- Optional query parameter "cursor" -------------
@@ -2399,6 +2425,8 @@ func (w *ServerInterfaceWrapper) GetWorkItem(ctx echo.Context) error {
 	}
 
 	ctx.Set(string(UiSessionScopes), []string{})
+
+	ctx.Set(string(CliTokenScopes), []string{})
 
 	// Invoke the callback with all the unmarshaled arguments
 	err = w.Handler.GetWorkItem(ctx, id)

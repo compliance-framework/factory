@@ -32,7 +32,8 @@ type RuleOptions struct {
 	// Cache is the observation cache, shared with the work-item controller. Default a new
 	// one with DefaultObservationTTL.
 	Cache *ObservationCache
-	// KillSwitches are the pause flags. Default NoKillSwitches.
+	// KillSwitches are the pause flags. Default StoreKillSwitches over the controller's store
+	// (the flags the pause/resume commands write).
 	KillSwitches KillSwitches
 	// Skills resolves TaskSpec skill refs. Default KeepSkills.
 	Skills SkillResolver
@@ -88,6 +89,9 @@ type RuleController struct {
 
 // NewRuleController returns the rule controller, watching the store's Events.
 func NewRuleController(s store.Store, cat CatalogProvider, conns ConnSource, opts RuleOptions) (*RuleController, error) {
+	if opts.KillSwitches == nil {
+		opts.KillSwitches = StoreKillSwitches{Store: s}
+	}
 	opts = opts.withDefaults(conns)
 	r := &RuleController{
 		s:      s,
@@ -321,4 +325,51 @@ func (r *RuleController) processLocked(ctx context.Context, cat *catalog.Catalog
 	}
 	r.log.DebugContext(ctx, "event applied", "event", ev.ID, "type", ev.Type, "workItem", wiID, "decisions", len(eval.Decisions))
 	return r.markProcessed(ctx, ev.ID, wiID)
+}
+
+// DryRun evaluates ev as the rule controller would, but applies nothing and writes nothing to
+// the store (the API's dry-run): against the work item wiID as it is now (state, runs,
+// observations and the real rails, kill switches included), or, when wiID is empty, against
+// the work item the event would create (its object observed, no state). A missing work item
+// is store.ErrNotFound.
+func (r *RuleController) DryRun(ctx context.Context, ev v1alpha1.Event, wiID string) (rules.Evaluation, error) {
+	cat := r.cat.Current()
+	if cat == nil {
+		return rules.Evaluation{}, errors.New("no catalog loaded yet")
+	}
+	wi := &v1alpha1.WorkItem{
+		TypeMeta: v1alpha1.TypeMeta{Kind: v1alpha1.KindWorkItem},
+		Status:   &v1alpha1.WorkItemStatus{State: map[string]any{}},
+	}
+	var (
+		existing *v1alpha1.WorkItem
+		tasks    []*v1alpha1.Task
+		runs     map[string][]rules.RunSummary
+	)
+	if wiID != "" {
+		if err := r.s.Get(ctx, store.Key{Kind: v1alpha1.KindWorkItem, Name: wiID}, wi); err != nil {
+			return rules.Evaluation{}, fmt.Errorf("get work item %s: %w", wiID, err)
+		}
+		existing = wi
+		var err error
+		if tasks, err = listTasks(ctx, r.s, wiID); err != nil {
+			return rules.Evaluation{}, err
+		}
+		if runs, err = runsBySpec(ctx, r.s, tasks); err != nil {
+			return rules.Evaluation{}, err
+		}
+	} else if link, ok := eventLink(ev); ok {
+		wi.Spec.Links = []v1alpha1.Link{link}
+	}
+	obs, err := observeLinks(ctx, r.opts.Cache, wi.Spec.Links)
+	if err != nil {
+		return rules.Evaluation{}, err
+	}
+	rails, err := newStoreRails(ctx, r.s, r.opts.KillSwitches, railsInput{
+		cat: cat, event: ev.ID, workItem: existing, tasks: tasks, obs: obs, runCap: r.opts.RunCap, now: r.opts.Clock.Now(),
+	})
+	if err != nil {
+		return rules.Evaluation{}, err
+	}
+	return r.engine.Evaluate(ctx, cat, ev, buildView(wi, runs, obs), rails)
 }
