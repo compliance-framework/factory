@@ -1,0 +1,7 @@
+{
+  "delivery": "e2e-1",
+  "type": "issue.opened",
+  "sender": { "login": "gus", "association": "MEMBER" },
+  "object": { "kind": "issue", "ref": "compliance-framework/docs#42" },
+  "subject": "compliance-framework/docs#42"
+}

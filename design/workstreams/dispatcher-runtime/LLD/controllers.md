@@ -38,6 +38,8 @@ func (c *Controller) Run(ctx context.Context) error
 
 Creates one `Conn` per Provider in the catalog (re-created when the Provider object's digest changes). Mounts `Conn.Handler(sink)` at the webhook path, where `sink.Accept` stores a `Delivery` record before the handler acknowledges. Watches `Delivery` (status `received`) → `Conn.Normalise` → `store.Create(Event)` per output (IDs `<delivery>/<n>`) → marks the delivery `normalised`. On startup calls `Conn.Recover`. Also owns the built-in **`factory` provider**: an in-process emitter `EmitFactoryEvent(type, workItem, data)` used by other controllers; it's the only writer of `factory.*` Events.
 
+Implemented in RT-S2-T04 as `ProviderController` (the built-in `factory` provider is `FactoryProvider`, RT-S2-T01): see [api-server.md §Decisions taken in RT-S2-T04](api-server.md#decisions-taken-in-rt-s2-t04).
+
 ### rule (RT-S2-T01)
 
 | | |

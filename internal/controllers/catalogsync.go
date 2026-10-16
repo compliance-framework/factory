@@ -145,6 +145,9 @@ func NewCatalogSync(src CatalogSource, opts CatalogSyncOptions) *CatalogSync {
 	return s
 }
 
+// Controller returns the underlying controller (its panics, for metrics).
+func (s *CatalogSync) Controller() *Controller { return s.ctrl }
+
 // Current returns the live catalog, nil before the first good one.
 func (s *CatalogSync) Current() *catalog.Catalog { return s.current.Load() }
 

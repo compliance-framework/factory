@@ -110,6 +110,8 @@ type Options struct {
 	// Ready, when set, must be closed before /readyz answers 200 (the startup rebuild), on top
 	// of a loaded catalog.
 	Ready <-chan struct{}
+	// Controllers are reported on /metrics (factory_controller_panics_total).
+	Controllers []*controllers.Controller
 	// MaxSubscribers bounds the SSE streams (default 100).
 	MaxSubscribers int
 	// KeepAlive is the SSE keep-alive interval (default 15 s).
@@ -156,8 +158,10 @@ type Server struct {
 	ops *echo.Echo
 
 	// done is closed by Shutdown: streams end. streamMu orders a stream's start (streams.Add)
-	// before Shutdown's Wait.
+	// before Shutdown's Wait. stopCtx is cancelled with it, so long polls end too.
 	done     chan struct{}
+	stopCtx  context.Context
+	stop     context.CancelFunc
 	streamMu sync.Mutex
 	stopped  bool
 	streams  sync.WaitGroup
@@ -197,6 +201,7 @@ func New(d Deps, opts Options) (*Server, error) {
 		d: d, opts: opts, clk: opts.Clock, log: opts.Logger.With("component", "server"),
 		done: make(chan struct{}),
 	}
+	s.stopCtx, s.stop = context.WithCancel(context.Background())
 	if opts.PublicURL != "" {
 		u, err := url.Parse(opts.PublicURL)
 		if err != nil || u.Scheme == "" || u.Host == "" {
@@ -221,13 +226,15 @@ func (s *Server) Echo() *echo.Echo { return s.e }
 // (`--ops-addr`): the routes have no auth.
 func (s *Server) OpsHandler() http.Handler { return s.ops }
 
-// Shutdown ends the SSE streams and waits for them (or ctx). Long polls end with their
-// requests; the caller shuts the http.Server down too.
+// Shutdown ends the SSE streams and waits for them (or ctx). It also stops accepting leases:
+// parked lease long polls answer 204 at once, and so does every later one. The caller shuts
+// the http.Server down too.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.streamMu.Lock()
 	if !s.stopped {
 		s.stopped = true
 		close(s.done)
+		s.stop()
 	}
 	s.streamMu.Unlock()
 	waited := make(chan struct{})

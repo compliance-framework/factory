@@ -101,6 +101,11 @@ func (s *Server) metrics(c echo.Context) error {
 	gauge("factory_ready", "1 when the catalog is loaded and startup is done.")
 	fmt.Fprintf(&b, "factory_ready %d\n", ready)
 
+	counter("factory_controller_panics_total", "Reconcile calls that panicked, by controller.")
+	for _, ctrl := range s.opts.Controllers {
+		fmt.Fprintf(&b, "factory_controller_panics_total{controller=%q} %d\n", ctrl.Name(), ctrl.Panics())
+	}
+
 	counter("factory_http_requests_total", "HTTP requests by status code.")
 	var codes []int
 	s.requests.Range(func(k, _ any) bool {

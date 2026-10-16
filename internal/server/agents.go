@@ -113,7 +113,16 @@ func (s *Server) LeaseTask(ctx context.Context, req gen.LeaseTaskRequestObject) 
 		n, _ := strconv.Atoi(w[:len(w)-1])
 		wait = min(time.Duration(n)*time.Second, MaxLeaseWait)
 	}
+	if s.stopCtx.Err() != nil {
+		return gen.LeaseTask204Response{}, nil // shutting down: no new leases
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(s.stopCtx, cancel)()
 	g, err := s.d.Scheduler.Lease(ctx, id, wait)
+	if err != nil && g == nil && errors.Is(err, context.Canceled) && s.stopCtx.Err() != nil {
+		return gen.LeaseTask204Response{}, nil // the poll was ended by Shutdown
+	}
 	if err != nil {
 		return nil, err
 	}

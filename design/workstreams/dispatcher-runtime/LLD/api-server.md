@@ -61,24 +61,45 @@ Body: `{type, target, args}`.
 ## `factory serve`
 
 ```text
-factory serve [--addr :8080] [--ops-addr 127.0.0.1:9090] [--catalog-repo URL --catalog-ref main | --catalog-dir ./catalog]
-              [--retention 2160h] [--public-url https://…] [--log-format json|text]
+factory serve [--addr :8080] [--ops-addr 127.0.0.1:9090] [--public-url https://…]
+              [--catalog-repo URL --catalog-ref main --catalog-path catalog | --catalog-dir ./catalog]
+              [--catalog-interval 60s] [--catalog-timeout 2m] [--retention 2160h] [--shutdown-timeout 30s]
+              [--auth-provider NAME] [--github-url https://github.com] [--github-api-url URL]
+              [--skills-base https://github.com/compliance-framework] [--log-level info] [--log-format json|text]
+              [--dev-fake-providers]
 ```
 
-Environment (names only; values from the secret store — see [rollout](../../poc-rollout/LLD/rollout.md#secrets)):
+| Flag | Default | Use |
+|---|---|---|
+| `--addr` | `:8080` | public listener: UI, `/api/v1`, `/hooks/{provider}` (what the tunnel forwards to) |
+| `--ops-addr` | `127.0.0.1:9090` | ops listener (`/healthz`, `/readyz`, `/metrics`); **must be loopback** (`127.0.0.0/8`, `::1`, `localhost`), else startup refuses |
+| `--public-url` | `$FACTORY_PUBLIC_URL`, else `http://localhost:<port>` (warned) | OAuth callback (`<url>/api/v1/auth/callback`), webhook URLs in the logs, UI links in templates, the origin cookie writes must come from |
+| `--catalog-repo`, `--catalog-ref`, `--catalog-path` | the factory repo, `main`, `catalog` | git catalog source |
+| `--catalog-dir` | — | local catalog directory (development); exclusive with the three git flags |
+| `--catalog-interval` | `60s` | catalog poll interval |
+| `--catalog-timeout` | `2m` | how long startup waits for the first valid catalog |
+| `--retention` | `2160h` (90 days) | store retention and closed work items' retention |
+| `--shutdown-timeout` | `30s` | how long shutdown waits for in-flight requests |
+| `--auth-provider` | the catalog's only `github` Provider | the Provider the UI and agent-owner logins belong to |
+| `--github-url`, `--github-api-url` | `https://github.com`, the auth Provider's `spec.github.apiURL` | OAuth web flow; `GET /user` (UI login, agent owners) |
+| `--skills-base` | `https://github.com/compliance-framework` | skill refs resolved with `git ls-remote` (`GitSkills`); empty leaves them unresolved |
+| `--log-level`, `--log-format` | `info`, `json` | `slog` |
+| `--dev-fake-providers` | off | **development and tests only**: registers the in-memory fake adapter for `github` |
+
+Environment (names only; values from the secret store — see [rollout](../../poc-rollout/LLD/rollout.md#secrets)). Secrets are read from the environment only (never flags) and never logged; a missing or short one is a startup error that names the variable.
 
 | Variable | Use |
 |---|---|
-| `FACTORY_SECRET_<NAME>_<KEY>` | resolves a catalog `secretRef{name, key}` (e.g. `FACTORY_SECRET_CCF_FACTORY_APP_PRIVATE_KEY`) |
-| `FACTORY_OAUTH_CLIENT_ID`, `FACTORY_OAUTH_CLIENT_SECRET` | UI login |
-| `FACTORY_PUBLIC_URL` | the public base URL (the tunnel), used for `--public-url`, the webhook URL and the OAuth callback; **not a secret** |
-| `FACTORY_SESSION_KEY` | cookie signing (32 bytes) |
-| `FACTORY_CLI_TOKEN` | CLI admin token |
-| `FACTORY_POOL_JOIN_TOKEN_<POOL>` | via `secretRef` of the Pool |
+| `FACTORY_SECRET_<NAME>_<KEY>` | resolves a catalog `secretRef{name, key}`: name and key upper-cased, every character but `A-Z0-9` as `_` (e.g. `FACTORY_SECRET_CCF_FACTORY_APP_PRIVATE_KEY`, `FACTORY_SECRET_LOCAL_POOL_JOIN_TOKEN`). A Pool whose join token isn't set is warned about at startup |
+| `FACTORY_OAUTH_CLIENT_ID`, `FACTORY_OAUTH_CLIENT_SECRET` | UI login (required) |
+| `FACTORY_PUBLIC_URL` | the public base URL (the tunnel), the default of `--public-url`; **not a secret** |
+| `FACTORY_SESSION_KEY` | cookie signing (required, ≥ 32 bytes; `openssl rand -hex 32`) |
+| `FACTORY_CLI_TOKEN` | CLI admin token (required, ≥ 32 characters) |
+| `FACTORY_POOL_JOIN_TOKEN_<POOL>` | via `secretRef` of the Pool, i.e. a `FACTORY_SECRET_…` variable |
 
 Wiring order is in [controllers.md §Ordering](controllers.md#ordering-and-startup). Graceful shutdown: stop accepting leases, wait ≤ 30 s for in-flight requests, cancel controllers.
 
-`factory dispatch --event file.json [--url --token]` posts `{type: dispatch, event}` to `/commands`.
+`factory dispatch --event file.json [--server URL]` posts `{type: dispatch, args: {event}}` to `<server>/api/v1/commands` with `FACTORY_CLI_TOKEN` (env only) and prints the stored event's id. `--server` defaults to `$FACTORY_SERVER`, else `http://127.0.0.1:8080`.
 
 ## Tests
 
@@ -117,3 +138,15 @@ Wiring order is in [controllers.md §Ordering](controllers.md#ordering-and-start
 - **SSE.** Each stream (at most 100; `503 too-many-subscribers`) opens its own store watches, one per kind it needs, instead of a shared hub: `Last-Event-ID` then simply becomes the watch's `SinceVersion` (when the store's history no longer has it, the stream starts from now), and a watch that expires because the client is slow is reopened from the last version it delivered. Run progress is diffed against the last ring buffer the stream saw (from the run read after the watch opened, so nothing falls in between); a resume backfills the whole ring. Frames are `event:`/`id: <store version>`/`data: <JSON>`; deletions send nothing; a `: connected` comment flushes the headers and `: keep-alive` follows every 15 s (injected clock). The stream writes through an `io.Pipe` into the generated `text/event-stream` response, which flushes per chunk, and ends cleanly when the request context ends or `Shutdown` is called.
 - **Ops.** `/healthz` is `ok`; `/readyz` is `503` until catalog-sync reports ready and `Options.Ready` (the startup rebuild) is closed; `/metrics` is the Prometheus text format written by hand (no client library on the allow-list): `factory_tasks{phase}`, `factory_agents{phase}`, `factory_sse_subscribers`, `factory_ready`, `factory_http_requests_total{code}`. The ops Echo has the same request ID, access log and recover, no auth, and none of the API routes; the public Echo has none of the ops routes (tested both ways).
 - **Webhooks.** `POST /hooks/{provider}` looks the connection up by the Provider's name and hands the request to `Conn.Handler(sink)` with the 1 MB body limit; signature checks, the 202/200/503 answers and the sink are the adapter's. An unknown provider is a `404` problem.
+
+## Decisions taken in RT-S2-T04
+
+- **No GitHub adapter yet (agreed deviation).** `factory serve` connects every catalog Provider through `provider.Registry`; this PR registers only `provider/fake`, and only under `--dev-fake-providers` (a flag, no env var, so it can't be switched on by a stray variable). Without it, a catalog Provider whose type has no adapter fails startup: `connect provider "github-public": type "github": provider: unknown provider type (registered adapter types: [])`, with a hint about the flag. GH-S1-T04 adds the real adapter with one line in `adapters()` (`cmd/factory/serve_app.go`), and the `httptest` fake-GitHub integration test lands with it. The adapted done criterion is `TestServeEndToEnd`: serve in-process on ephemeral ports with the fake provider and the PoC catalog (`--catalog-dir`), a recorded webhook (`cmd/factory/testdata/serve/issue-opened.json`) posted to `/hooks/github-public` (202, then 200 for the redelivery), a fake agent registered with the generated client (register → lease → heartbeat → complete), the task `Succeeded`, and `factory.run.completed` dispatching `implement` through `build-stack-start`.
+- **Provider controller (new, `controllers.ProviderController`).** Nothing implemented the LLD's provider controller, which the webhook path needs, so it is here: `Connect` connects every Provider at startup (all or nothing); `Run` follows catalog swaps (reconnects a Provider whose spec digest changed, keeps the old Conn when the new one fails, drops removed ones) and normalises deliveries. It is the `ConnSource` of every controller, the scheduler, auth and the server, and the server's `IngressSink`: `Accept` stores an internal `Delivery` record named by the delivery id (`ErrDuplicateDelivery` when it exists) before the adapter acknowledges; the reconcile calls `Conn.Normalise`, creates each Event once, marks the record `normalised` (or `failed` for an `ErrInvalid`/`ErrUnsupported` delivery, never retried) and drops its body and headers. Handled records are deleted after 24 h; a later redelivery is still deduped by its Events' ids. `Recover` runs once at startup with `since` = process start: the memory store can't know the restart gap, so wider recovery waits for a persistent store.
+- **Startup order.** store + sweeper (`store.RunSweeper`, `--retention`) → catalog-sync (wait for `Ready`, `--catalog-timeout`, then fail with the source error or the first three diagnostics) → providers (`Connect`, provider controller, `Recover`) → controllers, scheduler (`auth.GitHubOwners`), auth and server constructed → both listeners (webhooks are stored from here; the rule controller isn't running yet, so they wait as Events) → work-item `Rebuild` (a failure stops serve) → rule, debounce, work-item, run controllers and the scheduler → `Options.Ready` closed (`/readyz` 200). The UI (`webui.Handler()`) is the `GET`/`HEAD /*` catch-all on `Server.Echo()`.
+- **Shutdown** on SIGINT/SIGTERM: `Server.Shutdown` ends the SSE streams **and** the lease long polls (they answer 204; a poll after shutdown answers 204 without matching), then both `http.Server`s drain for `--shutdown-timeout` (closed if it runs out), then the controllers' context is cancelled and serve waits for them. The controllers stay up while requests drain, so an in-flight complete still reaches the run controller.
+- **Config validation.** The four secrets are required (the session key and CLI token ≥ 32); `--ops-addr` must be loopback and differ from `--addr`; `--catalog-dir` must be a directory and excludes the git flags (an explicit `--catalog-repo/-ref/-path` with it is an error); a ref may not start with `-`; `--public-url` must be absolute http(s) without credentials, query or fragment (`http` on a non-loopback host is warned: the session cookie is `Secure`). Errors name flags and variables, never values.
+- **Logs.** `slog` JSON by default (also `slog.SetDefault`). The startup line logs addresses, the public URL, the catalog source (git URLs redacted), retention and the dev flag; each connected Provider is logged with its webhook URL. No secret, token or request body is logged (the integration test greps the logs for every secret it used).
+- **Metrics.** `server.Options.Controllers` adds `factory_controller_panics_total{controller}` for catalog-sync, provider, rule, debounce, work-item, run and the scheduler's lease controller.
+- **GitHub endpoints.** The UI login and agent-owner checks use `--github-url` and `--github-api-url` (default: the auth Provider's `spec.github.apiURL`), so a GHE Provider and tests work without code changes. `--skills-base ""` disables skill resolution (tests, offline development).
+- **`factory dispatch`** takes `--server` (or `FACTORY_SERVER`) and the token from `FACTORY_CLI_TOKEN` only, not the LLD's `--url --token`: a token flag would land in shell history and `ps`. Exit 0 prints the event id; 1 is a refused command (its problem title, code and detail on stderr); 2 is a usage error.

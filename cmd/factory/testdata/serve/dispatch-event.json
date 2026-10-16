@@ -1,0 +1,11 @@
+{
+  "source": "github-public",
+  "type": "issue.opened",
+  "subject": "compliance-framework/docs#42",
+  "time": "2026-10-16T09:00:00Z",
+  "data": {
+    "provider": "github-public",
+    "object": { "provider": "github-public", "kind": "issue", "ref": "compliance-framework/docs#42" },
+    "repo": "compliance-framework/docs"
+  }
+}
