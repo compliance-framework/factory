@@ -10,40 +10,6 @@ import (
 	"github.com/compliance-framework/factory/internal/patterns"
 )
 
-// matchSelector reports whether labels satisfy a Kubernetes-style label selector. An empty
-// selector matches everything.
-func matchSelector(s v1alpha1.LabelSelector, labels map[string]string) bool {
-	for k, want := range s.MatchLabels {
-		if got, ok := labels[k]; !ok || got != want {
-			return false
-		}
-	}
-	for _, r := range s.MatchExpressions {
-		got, ok := labels[r.Key]
-		switch r.Operator {
-		case "In":
-			if !ok || !slices.Contains(r.Values, got) {
-				return false
-			}
-		case "NotIn":
-			if ok && slices.Contains(r.Values, got) {
-				return false
-			}
-		case "Exists":
-			if !ok {
-				return false
-			}
-		case "DoesNotExist":
-			if ok {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	return true
-}
-
 // checkSelector reports invalid matchExpressions (CAT303): In/NotIn need values,
 // Exists/DoesNotExist take none.
 func (v *validator) checkSelector(d *document, p fieldPath, s v1alpha1.LabelSelector) {
@@ -114,7 +80,7 @@ func (v *validator) resolveSelection() {
 		spec := rse.rs.Spec
 		v.checkSelector(rse.doc, fieldPath{"spec", "providerSelector"}, spec.ProviderSelector)
 		for _, pn := range sortedKeys(v.providers) {
-			if matchSelector(spec.ProviderSelector, providerLabels(v.provider(pn))) {
+			if spec.ProviderSelector.Matches(providerLabels(v.provider(pn))) {
 				rse.providers = append(rse.providers, pn)
 			}
 		}
@@ -153,7 +119,7 @@ func (v *validator) selectRules(name string, rse *ruleSetEntry) {
 		matched := 0
 		for _, rn := range v.ruleNames {
 			r := v.rules[rn]
-			if r.inlineOf == "" && matchSelector(*sel.Selector, r.rule.Metadata.Labels) {
+			if r.inlineOf == "" && sel.Selector.Matches(r.rule.Metadata.Labels) {
 				picked[rn] = true
 				matched++
 			}
@@ -188,7 +154,7 @@ func (v *validator) selectRules(name string, rse *ruleSetEntry) {
 func (v *validator) ruleProviders(rse *ruleSetEntry, r *ruleEntry) []string {
 	var out []string
 	for _, pn := range rse.providers {
-		if ps := r.rule.Spec.ProviderSelector; ps == nil || matchSelector(*ps, providerLabels(v.provider(pn))) {
+		if ps := r.rule.Spec.ProviderSelector; ps == nil || ps.Matches(providerLabels(v.provider(pn))) {
 			out = append(out, pn)
 		}
 	}
