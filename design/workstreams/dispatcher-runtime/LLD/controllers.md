@@ -114,3 +114,50 @@ Webhooks received during rebuild are accepted and stored as Events; the rule con
   - `SourceError`: the last git or filesystem failure, redacted.
 
   Validation errors are logged at warn level with a count and the first three diagnostics.
+
+## Decisions taken in RT-S2-T01
+
+- **Wiring.** `NewRuleController(store, CatalogProvider, ConnSource, RuleOptions)`, `NewDebounceController(rule)`, `NewRunController(store, CatalogProvider, *FactoryProvider, RunOptions)` and `NewWorkItemController(store, CatalogProvider, ConnSource, *FactoryProvider, WorkItemOptions)`. Each has `Run(ctx)` and `Controller()`. `ConnSource{Conn(name)}` is what the provider controller implements; until it exists, `StaticConns` is used. The rule and work-item controllers share an `ObservationCache` (30 s TTL), which resync refreshes.
+- **Built-in `factory` provider.** `FactoryProvider.Emit(FactoryEvent{Type, WorkItem, Key, Facts, Actor})` stores the Event `factory/<Key>`. It accepts only the vocabulary's `factory.*` types. Emitting a key again returns the stored event, so emitters can retry. `EmitCommand` is for the `factory.command.*` commands of RT-S2-T03.
+- **Processed mark.** `v1alpha1.Event` has no status, so processing creates an internal `EventStatus` record named by the event id. It is deleted with its Event: the informer delivers the deletion and the reconcile finds no Event.
+- **Work item creation.** The probe evaluation uses the would-be item's view (its object observed, no state) instead of a fully empty one, because rules read `item.pr` (`review-human-prs`) and would fail on an empty view. The id is deterministic, `wi_<hash(provider/ref)>`, so two events about one new object create one item. The creating event's actor is the reporter. An event without an object links its repo.
+- **View.** Every link is observed through the cache, not only the primary one, because `item.prs` needs the stack's PRs. `item.pr` is the primary link's PR, else the last linked PR. `item.deploy` comes from the primary link first. `RunsBySpec` holds the counted runs: completed, failed and cancelled; abandoned and lost runs are left out.
+- **Rails** belong to the rule controller (`storeRails`). They are built per evaluation and `Check` does no I/O.
+  - Kill switch: the `factory:stop` label on any linked object, or `KillSwitches.Paused(scope, name)` for global, provider, queue or work item. The pause kill-switches come with RT-S2-T03's `pause`/`resume` command, which stores the flags; until then the default is `NoKillSwitches`, so only the label stops an item.
+  - Run cap: 20 tasks per item.
+  - Single active run per TaskSpec. An allowed `cancel` frees its TaskSpec for a later `dispatch` in the same evaluation.
+  - Budget: the queue's daily `BudgetCounter`. When it is spent the verdict is `Deferred{budget}`, and the Task is created Pending with that reason. RuleSet budgets aren't checked here, because `Rails.Check` gets no RuleSet: they are checked at lease time by the scheduler (RT-S2-T02).
+  - Tasks the same event created don't count, so a retried reconcile reaches the same verdicts.
+- **Work item lock.** Every holder of `Lock("wi/<id>")` (rule, debounce, run finish, retention) goes through `withItemLock`, which runs the locked section under a context whose deadline is 3/4 of the lease (`LockTTL`, default 2 m). The lease, which isn't renewed, therefore can't expire under a slow provider call. A section that hits the deadline fails with `ErrLockDeadline`, the lock is released, and the reconcile is retried.
+- **Idempotency.** Each decision has a key `evt/<event>/<rule>/<i>`, where `i` counts the rule's decisions. The task id is `tsk_<hash(key)>`, and each notification destination gets `<key>/<n>`. A retried reconcile or a replayed event creates nothing again. `cancel` skips the tasks of the same event. Every rule-level effect and notification is also recorded as an `Effect`, labelled with the rule and with an empty `spec.task`.
+- **Apply failures.** A dispatch that doesn't compile, a template that doesn't render, or an effect the provider rejects (anything but `ErrRetryable`) is recorded in the decision's `reason` (`apply failed: …`), and the other decisions still apply. Store errors and retryable provider errors fail the reconcile, which is then retried.
+- **Task compilation.**
+  - Inputs are the TaskSpec defaults overlaid with the dispatch inputs, then `ValidateInputs`.
+  - Harness: the dispatch request, else the TaskSpec default.
+  - Target: the dispatch target, else the primary link (repo taken from its ref).
+  - Workspace `=` refs are evaluated with `inputs` and `task{id, target.repo}`.
+  - Context, in order: `dispatch.context` (`event.object` becomes the object; `event.<fact>` becomes its ref or the event's content ref), the primary link, then the workspace repos mounted at `/work/<name>`. Everything but the repos is `untrusted`.
+  - The prompt is rendered with `{task, inputs, item{id, state, links}, context}`. There is no blob store, so it is stored as an internal `TaskPrompt` record, and `prompt.ref` is `api://tasks/<id>/prompt`.
+  - Skills resolve through `SkillResolver`. The default is `KeepSkills`; `factory serve` wires `GitSkills{Base}` (`gitsource.Head`, cached).
+  - Credentials request: the `rw` mount (else the target repo), the other mounts as read repos, TTL `min(1h, maxWallClock + 10m)`.
+  - Requires: the TaskSpec's `requires.labels` merged with the dispatch's, sorted and deduplicated, go in `Task.spec.requires` (unset when there are none), for the scheduler's label match.
+- **Notify.** The body comes from the destination provider's type. `item` destinations post `comment` (`pr.comment` on PRs) on the links. A `channel` posts `comment` on `{kind: channel}`, and a `group` posts `comment` on `{provider: via, kind: group}` with `args.as`. Block Kit bodies aren't supported yet (recorded as a failure). Templates see `event`, `actor`, `item{id, state, links, counters}`, `run`, `approval` and `links.ui` (`<UIBaseURL>/workitems/<id>`). Rule-level notifications and effects act as the `author` identity.
+- **Debounce.** `DebounceController` watches internal `Debounce` records named `dbn_<hash(key)>`; the first match of a key wins. The queue's delayed requeue at `Until` is the timer. When it fires it re-checks the rails, applies the held actions and records one decision.
+- **Runs.**
+  - The Run is created from the Task watch when the task is Leased or Running (`run_<task>-<n>`, attempt = `attempts + 1`), and `RunAPI.LeaseIssued` creates it at once.
+  - How a run ended is `Run.status.end` (set with `endedAt`; an open run has none): `completed` when the agent returned a valid Result (whatever its status), `failed` for a timeout, an invalid result or a final infrastructure failure, `cancelled`, `abandoned` (given back) or `lost` (the task left the run without a word). Completed, failed and cancelled runs count towards `item.count`; abandoned and lost ones don't.
+  - `RunAPI` is `LeaseIssued`, `Complete(taskID, Result)`, `Abandon`, `CancelRequested` and `AckCancel`, keyed by task id; the API server maps a lease to its task.
+- **Results.**
+  - A result is valid when its task matches, its status is known, its outcome is one of the TaskSpec's outcomes (required when the status is `done`), and it passes the output schema.
+  - An invalid result fails the task with `invalid-result`. It isn't stored as the run's Result but as an `invalid-result` progress event. A valid result with status `failed` fails the task with `failed`, but its run is `completed`, with the Result stored.
+  - `run.result` is the Result's JSON with the `data` fields mirrored at the top level (catalog-poc: `run.result.plan`).
+  - The event is `factory/run/<run>`, with facts `run{id, spec, outcome, status, inputs, result, agent, harness{name, model}, reason?}`.
+- **Counters.** A counted run increments the counter once, right after the run is marked ended. A retry that finds the run already ended skips the count, so the worst case is an under-count, never a double count.
+- **Timeout.** The task is requeued for `StartedAt + maxWallClock + 2m`, then fails with `timeout` (a Cancelling task becomes Cancelled). Revoking the lease is RT-S2-T02's: the scheduler sees the task leave Leased/Running.
+- **Cancel.** A Cancelling task without an agent is Cancelled at once, with no run event. With an agent, `CancelRequested` is true until `AckCancel`, which cancels the task, marks the run `cancelled` and emits `factory.run.failed{status: cancelled}`.
+- **Abandon.** `throttled` returns the task to Pending (`agent-throttled`) without an attempt and marks the run abandoned. `agent-error` maps to `infra-failure` and `shutdown` to `agent-lost`: retried (Pending, attempts + 1) while the queue's retry policy allows, else Failed with that reason and `factory.run.failed`. Lease expiry stays the scheduler's; the run controller closes the open run of a task that went back to Pending (`lost`) or that something else failed (and emits `factory.run.failed`).
+- **Work-item controller.** One key per item.
+  - Projection: written when its digest changed (state, counters, links; no labels, since none are defined yet).
+  - Resync: when due (the shortest Provider `resync.every`, default 10 m). The first observation after start is a baseline and emits nothing, because the rebuild already read that state. A changed observation (ignoring `updatedAt` and projections) emits `factory.workitem.resynced` with key `resync/<wi>/<digest>` and facts `resync.changed[]`.
+  - Retention, in the same pass: an item whose links are all closed, merged or gone, with no active task and whose last activity (creation, decisions, tasks, run ends) is older than the retention, is deleted under its lock after a re-check.
+- **Rebuild.** `Rebuild(ctx)` (bounded at 5 m) lists each RuleSet's scope on each bound provider, observes each object, and merges the projections per work item id: links are united (plus the object itself), counters take the maximum, and state comes from the most recently updated object. Items already in the store are left alone.
