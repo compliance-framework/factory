@@ -89,3 +89,28 @@ Webhooks received during rebuild are accepted and stored as Events; the rule con
 - Rebuild: fake provider pre-loaded with markers → identical WorkItems after restart.
 - Human merge out of band → resync emits `factory.workitem.resynced` → merge rule doesn't double-merge (observes merged).
 - Idempotency: the same Event delivered twice → one Task, one comment.
+
+## Decisions taken in RT-S1-T02
+
+- **Constructor, not struct literal.** `NewController(name, rec, Options{Workers, Clock, Backoff, Logger})` creates the `Queue`, so keys can be enqueued before `Run`. `Watch(s, kind, keyFn, InformerOptions)` takes no context: it registers an informer that `Run` starts and stops with the workers, so one context owns the whole controller. `Watch` after `Run` is an error.
+- **Queue semantics** follow client-go: a dirty set dedupes, a key added while it is being processed is queued again on `Done`, and `AddAfter` keeps the earlier deadline. `ShutDown` drops the keys still queued, and `Run` returns once the in-flight reconciles and the informers have returned. A reconcile that fails because its context was cancelled is not retried.
+- **Backoff:** 5 ms → 5 min, with up to 10% jitter by default. A `Result.RequeueAfter` resets it.
+- **Panics:** recovered, logged with their stack, retried with backoff, and counted on `Controller.Panics()`. That counter is `controller_panics_total` once metrics are wired, in RT-S2-T04.
+- **Clock:** `internal/clock.Clock` gained timers: `NewTimer(d)` and `NewTimerAt(deadline)` return a `clock.Timer{C(), Stop()}`. `clock.Fake` fires its timers on `Advance` and `Set`, and has `Timers()` and `BlockUntil(n)` for tests. The controllers, the queue and the informer all take a `clock.Clock`. Deadlines are absolute (`NewTimerAt`), so a fake advance between reading `Now` and arming a timer can't push the timer later. The store still only calls `Now`.
+- **Informer:** lists in pages and watches from the **first page's** `ListMeta.ResourceVersion`. Changes made while the later pages are read are then replayed, so a handler may see an object twice. On `ErrWatchExpired` it re-lists at once and counts it (`Resyncs()`). Other list or watch errors back off from 100 ms to 30 s. `Synced()` closes after the first list.
+- **catalog-sync runs on the runtime:** one key (`catalog`) and one worker. Polling is `Result{RequeueAfter: interval}` (default 60 s). `Resync()` is the `resync-catalog` command: it reloads the head even when it is unchanged or was rejected. A source that can't be read returns an error and is retried with backoff from 1 s, capped at the interval. A rejected revision is not loaded again until the head moves.
+- **`CatalogSource`** is `Head(ctx)` + `Load(ctx, revision)` + `String()`. There are three implementations:
+  - `GitSource{Repo, Ref, Path}` (defaults: the factory repo, `main`, `catalog`) calls `gitsource.Head` and `gitsource.Load(repo, <sha>, path)`. All git calls are in `internal/catalog/gitsource`:
+    - `gitsource.Head(ctx, repoURL, ref)` runs `git ls-remote -- <repo> <ref> <ref>^{}`, with the same locked-down environment as `Load` (`GIT_ALLOW_PROTOCOL`, no prompts, no system config). It prefers a branch, then a peeled tag, then a tag; a full commit SHA is returned as is.
+    - Every gitsource error has the URL's user info redacted and still wraps `ErrGit` (or the context's error). `gitsource.RedactURL` is used for logs and status.
+  - `DirSource` (`--catalog-dir`) polls a hash of the tree, the same `dir:<sha256>` that `LoadDir` computes, instead of using fsnotify, which isn't on the allow-list.
+  - `FakeCatalogSource`, for tests.
+- **Readers:** `CatalogProvider{Current()}`. `CatalogSync.Current()` is an `atomic.Pointer[catalog.Catalog]` load. **Before the first good catalog it returns nil** and `Ready()` stays open; startup waits on `Ready()`, so controllers started after it never see nil. A later failure never clears the catalog.
+- **Notification:** `Snapshot()` returns the live catalog and a channel that is closed at the next swap (a broadcast; no subscriber registry, nothing blocks the swap). The LLD names no `factory.catalog.*` event, so none is emitted.
+- **Status:** `CatalogStatus` is kept in memory; it isn't a store record, because config never goes in the store. `Status()` returns a copy for the API server. Its fields:
+  - `Ready`, `LastGoodSHA`, `LoadedAt`, `LastAttemptSHA`, `LastSuccess`, `LastFailure`;
+  - `Errors`: the error-severity `catalog.Error` diagnostics of the last rejected load, bounded (default 50) with `ErrorsOmitted`;
+  - `Warnings`: the live catalog's warnings, bounded the same way;
+  - `SourceError`: the last git or filesystem failure, redacted.
+
+  Validation errors are logged at warn level with a count and the first three diagnostics.
