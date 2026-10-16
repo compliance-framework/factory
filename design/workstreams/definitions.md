@@ -129,7 +129,7 @@ Every PR gets `/ccf-review:review <PR URL>` before merge, and `--again` after ne
 ## FND: foundation
 
 **Goal.** A buildable `factory` repo with CI, the layout every other workstream builds in, and the **contracts** they code against.
-**Owns:** repo root files, `.github/`, `Makefile`, `internal/apis/`, `api/`, `schemas/`, `internal/webui/` (placeholder).
+**Owns:** repo root files, `.github/`, `Makefile`, `internal/apis/`, `api/`, `schemas/`, `internal/webui/` (placeholder), `internal/provider/` (the interface; `github/` and `tokens/` are GH's), `internal/provider/fake/`.
 **LLD:** [repo-layout.md](foundation/LLD/repo-layout.md), [contracts.md](foundation/LLD/contracts.md).
 
 ### FND-S0-T01 `chore: scaffold the factory repo`
@@ -186,6 +186,18 @@ Every PR gets `/ccf-review:review <PR URL>` before merge, and `--again` after ne
 - Add a tiny `cmd/factory-mock` (plain `net/http`, no Echo) that serves the contract with canned responses from `api/examples/`. Agent and web developers can use it before RT exists.
 
 **Done when:** the spec lints clean (`redocly lint` or `vacuum`), generation is reproducible, and `factory-mock` answers every operation with its example.
+
+### FND-S1-T03 `feat(provider): Provider interface and fake`
+
+- **Branch:** `fx/fnd-provider-interface` · **Base:** `fx/rt-s1-t02-controller-runtime` · **Stack:** `rt` · **Status:** ✅ done by this PR
+
+**Spec.** A contract gap: [contracts.md §Provider interface](foundation/LLD/contracts.md#provider-interface) defines `internal/provider` and `provider/fake`, but no task built them, and RT-S2-T01 (controllers) and GH-S1 (the GitHub adapter) both code against them.
+
+- `internal/provider`: `Adapter`, `Conn`, `IngressSink`, `Projection` exactly as in contracts.md, every type they reference (v1alpha1 types wherever they fit), and a `Registry` from Provider type to adapter.
+- `internal/provider/fake`: in memory and concurrency-safe; seeded objects for `Observe` and `List`, recorded `Project` and `Apply` calls (idempotency-key replay), scripted deliveries into an `IngressSink` normalised into Events, `ResolveGroup` from configured membership, fake git tokens, health, a webhook `Handler` and `Recover`.
+- Record each refinement in [contracts.md §Refinements](foundation/LLD/contracts.md#refinements-fnd-s1-t03).
+
+**Done when:** `go test -race ./internal/provider/...` passes, the interface matches contracts.md with its documented refinements, and the GH LLD's adapter can implement it as written.
 
 ---
 

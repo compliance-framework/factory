@@ -1,6 +1,6 @@
 # LLD — Contracts: Go types, schemas, provider interface, HTTP API (FND)
 
-> Workstream: [FND](../../definitions.md#fnd-foundation) · Tasks: FND-S1-T01, FND-S1-T02
+> Workstream: [FND](../../definitions.md#fnd-foundation) · Tasks: FND-S1-T01, FND-S1-T02, FND-S1-T03
 > These contracts are the **only** coupling between workstreams. Changing them = a dedicated PR merged before dependents.
 
 ## Go types
@@ -69,8 +69,8 @@ All have the `metadata` / `spec` / `status` shape except Event (CloudEvents attr
 |---|---|
 | `Event` | CloudEvents: `ID`, `Source` (provider instance or `factory`), `Type EventType`, `Subject`, `Time`; `Data EventData{Provider, Actor *Actor{ID, Tier, IsBot, IsFactory, Identity}, Object *ObjectRef{Provider, Kind, Ref}, Repo, ContentRef, Facts map[string]any, Raw json.RawMessage}`; `WorkItem string` (set for `factory.*`). No `metadata`. |
 | `WorkItem` | `Spec.Links []Link{Provider, Ref, Kind, Primary}`; `Status.State map[string]any`, `Counters map[string]int`, `Approvals []ApprovalRef{Name, Phase}`, `Decisions []Decision{At, Event, RuleSet, Rule, Fired, Inputs, Rails []RailVerdict{Rail, Verdict, Reason}, Actions, Reason}` (bounded, newest `MaxDecisions` = 200), `Reporter *Actor` |
-| `Task` | `Metadata TaskMeta{ID, WorkItem, Provenance{Event, RuleSet, Rule, CatalogSHA}, Labels, ResourceVersion, CreatedAt}` (named by id, no `name`); `Spec TaskRunSpec{TaskSpec TaskSpecRef{Name, Digest}, Queue, Pool, Provider, Target, Inputs, Harness{Request *HarnessRequest, Resolved *HarnessResolved (null until leased)}, Skills (with commit), Prompt{Ref, Digest}, Context []ContextItem{Kind, Provider, Ref, Trust, Mount}, Credentials{Git{Provider, Identity, Repo, ReadRepos, Permissions, TTL}, LLM: "agent-local"}, Effects, Limits, Output}`; `Status{Phase (Pending\|Leased\|Running\|Succeeded\|Failed\|Cancelling\|Cancelled), Agent *string (null until leased), Reason, Attempts, LeaseExpiresAt}` |
-| `Run` | `Spec{Task, Attempt, Agent, Owner}`; `Status{StartedAt, EndedAt, Progress []ProgressEvent{At, Kind, Message, Data} (ring buffer), Result *Result, TranscriptRef, Usage *Usage}` |
+| `Task` | `Metadata TaskMeta{ID, WorkItem, Provenance{Event, RuleSet, Rule, CatalogSHA}, Labels, ResourceVersion, CreatedAt}` (named by id, no `name`); `Spec TaskRunSpec{TaskSpec TaskSpecRef{Name, Digest}, Queue, Pool, Provider, Target, Inputs, Harness{Request *HarnessRequest, Resolved *HarnessResolved (null until leased)}, Requires *Requires (merged TaskSpec + dispatch agent labels; matched by the scheduler), Skills (with commit), Prompt{Ref, Digest}, Context []ContextItem{Kind, Provider, Ref, Trust, Mount}, Credentials{Git{Provider, Identity, Repo, ReadRepos, Permissions, TTL}, LLM: "agent-local"}, Effects, Limits, Output}`; `Status{Phase (Pending\|Leased\|Running\|Succeeded\|Failed\|Cancelling\|Cancelled), Agent *string (null until leased), Reason, Attempts, LeaseExpiresAt}` |
+| `Run` | `Spec{Task, Attempt, Agent, Owner}`; `Status{StartedAt, EndedAt, End RunEnd (completed\|failed\|cancelled\|abandoned\|lost; empty while running), Progress []ProgressEvent{At, Kind, Message, Data} (ring buffer), Result *Result, TranscriptRef, Usage *Usage}` |
 | `Agent` | `Spec{Pool, Owner, Capabilities{Harnesses []HarnessOffer{Name, Version, Auth, Models, DefaultModel, ReasoningEffort}, Labels}, Lending *Lending{Unlimited, Queues, RuleSets, Harnesses, MaxConcurrent, MaxRunsPerDay, MaxTokensPerDay, Hours}}`; `Status{Phase (Ready\|Busy\|Throttled\|Draining\|Offline), ThrottledUntil *time.Time (null unless throttled), LastHeartbeat, Running []TaskID, Today{Runs, Tokens}}` |
 | `Effect` | `Spec{Task, Op, Target ObjectRef, IdempotencyKey, Identity, Request map[string]any}`; `Status{Result{URL, Error}, At}` |
 | `BudgetCounter` | name `budget.<scope>.<name>.<YYYY-MM-DD>`; `Status{Runs, Tokens, USD}` (CAS-updated by the scheduler) |
@@ -163,6 +163,43 @@ type Projection struct {
 ```
 
 `provider/fake` keeps objects in memory, records effects, and can emit scripted events — used by CORE/RT tests. (`factory-mock` serves canned examples and needs no provider.)
+
+### Refinements (FND-S1-T03)
+
+The interface above is implemented as written; the types it references, and the gaps the GH and RT LLDs left, are settled as follows.
+
+**Supporting types** (`internal/provider`; v1alpha1 types wherever they fit):
+
+| Type | Shape | Why |
+|---|---|---|
+| `RawEvent` | `ID` (the Delivery record name, unique across providers: `gh-<X-GitHub-Delivery>`), `Provider` (instance name), `Type` (native event name, `X-GitHub-Event`), `Headers http.Header`, `Body []byte`, `ReceivedAt` | what [GH §Ingress](../../provider-github/LLD/github-provider.md#ingress-and-normalisation) stores before acking. `Body` is bytes, not `json.RawMessage`, because a provider may post form-encoded bodies |
+| `Observation` | `Ref ObjectRef`, `State` (`open`\|`closed`\|`merged`), `Labels`, `Author *v1alpha1.Actor` (tier unresolved; `IsFactory`/`Identity` say whether a factory App opened it), `UpdatedAt`, exactly one of `Issue{SubIssues, LinkedPRs, Comments}` / `PR{Draft, Head, Base, Checks{State, Settled}, ApprovedBy []{Identity, Commit}, UnresolvedThreads, MergedAt, MergeCommit}`, `Deploy *{State, SHA, URL, ContainsMerge}`, `Projections []Projection` | the fields [GH §Observe](../../provider-github/LLD/github-provider.md#observe-list-and-projection) lists, shaped like the rules' `item.pr` / `item.deploy` (`rules.PRView`, `DeployView`) without importing `rules`. No untrusted text. JSON-tagged so the work-item controller can digest it for resync |
+| `EffectRequest` | `Op EffectOp`, `Target ObjectRef` (for `create-issue` / `pr.open`, `Ref` is the repo `owner/name`), `Args map[string]any`, `Identity`, `IdempotencyKey` (required) | the Effect record's spec without `task`; [api-server.md §Effector](../../dispatcher-runtime/LLD/api-server.md#effector-api-post-tasksideffects) step 7 and the rule controller's `evt/<event>/<rule>/<i>` keys |
+| `EffectResult` | `URL`, `Object *ObjectRef` (created or acted on), `Outcome` (e.g. `labelled-for-merge`; empty = applied as asked), `Replayed` | `v1alpha1.EffectResult{URL, Error}` is the stored status; the controllers also need the created object (to link it), pr.merge's fallback and whether a key was replayed |
+| `GitCredentialRequest` | `Identity`, `Repo` (required: no unscoped token), `ReadRepos`, `Permissions`, `TTL time.Duration` | the Task's `spec.credentials.git` minus `provider` (the Conn is the provider), with the TTL the scheduler computes at lease time |
+| `Credential` | `Provider, Host, Username, Token, ExpiresAt, Repo, ReadRepos, Permissions` | exactly the API's `GitCredential`. `String`, `Format` (every fmt verb), `LogValue` and `MarshalJSON` all redact `Token` (`[REDACTED]`), so it can't leak through a log line or a store record; the lease response copies the fields into the generated type explicitly |
+| `SecretResolver` | `Resolve(ctx, v1alpha1.SecretRef) ([]byte, error)` (+ `SecretResolverFunc`) | bytes, for PEM keys |
+| `HealthStatus` | `Status` (`ok`\|`degraded`\|`down`\|`unknown`), `Message`, `CheckedAt` | the API's `ProviderHealth` |
+| `Projection` | as above, JSON-tagged | Observe reads it back |
+
+**Behaviour the LLDs implied, now pinned:**
+
+- **Duplicate deliveries.** A sink returns `provider.ErrDuplicateDelivery` (wrapped or not) when the Delivery record exists. `Handler` answers `202` on success, `200` on a duplicate and `503` on any other error. `Recover` skips duplicates, which is how it re-ingests "only what the store hasn't seen".
+- **Event IDs.** `provider.EventID(delivery, n)` = `<delivery>/<n>`, with Events numbered in object-ref order; `Source` and `Data.Provider` are the Provider's name and actor IDs are `<provider>:<login>` (as in the rules fixtures).
+- **Projection round-trip.** `Observation.Projections` holds the projections found on the object (the GitHub markers, one per work item, sorted by work item ID), so the work-item rebuild is `List` → `Observe` → `Projections`, and marker parsing stays inside the adapter.
+- **Trust Groups.** `Connect` carries no catalog, but trust rules name catalog Groups. `provider.GroupLookup` (`func(name) (v1alpha1.GroupSpec, bool)`) is given to the adapter's **constructor**, reading the live catalog, so a Conn sees Group changes without reconnecting. Clock, logger and HTTP client go to the constructor too; `Connect`'s signature is unchanged. `provider.StaticGroups` builds one for tests.
+- **`ResolveGroup`** returns provider-native user IDs (GitHub logins, not `<provider>:<login>` Actor IDs), sorted and deduplicated.
+- **Errors** (`errors.Is`): `ErrNotFound`, `ErrInvalid` (missing key, unscoped credential, malformed delivery, wrong provider), `ErrUnsupported` (git-side ops; ops a provider type lacks), `ErrRetryable` via `*RetryableError{RetryAfter, Err}` (the Effector API answers 503), `ErrDuplicateDelivery`, and the registry's `ErrUnknownType` / `ErrAlreadyRegistered`.
+- **Registry.** The provider controller connects one Conn per catalog Provider by type, so `provider.Registry` (`NewRegistry`, `Register`, `Lookup`, `Types`, `Connect`) maps `Type()` to adapters. It is a value, not a global: `factory serve` registers the GitHub adapter, tests register the fake under `github`.
+
+**Not in the contract.** `Conn` has no `Close`: the GitHub Conn holds no goroutines, and the controller simply drops a replaced Conn. The API's single `gitCredential` has no slot for the separate read-only token [GH §Auth](../../provider-github/LLD/github-provider.md#auth-and-tokens) mints for private read repos; `Credential.ReadRepos` lists only what `Token` can read, and a second token needs an additive API change (GH-S1-T01 to decide).
+
+**`provider/fake`.** `fake.NewAdapter(Options{Type (default github), Clock, Groups, Identities (default ccf-factory[bot] → author, ccf-factory-reviewer[bot] → reviewer), Host, BaseURL})`; `Adapter.Conn(name)` returns the per-instance `*fake.Conn` (it survives reconnects) so tests can seed it before connecting, and `fake.NewConn` builds one without an adapter. Everything is mutex-guarded and getters return copies.
+
+- **Objects:** `Seed(...Observation)` (defaults: provider, kind `issue`, state `open`), `Object`, `Update` (out-of-band changes, e.g. a human merge). `Observe` returns them; `List` returns those in scope (`internal/patterns` globs) that are open or carry a projection.
+- **Ingress:** tests build `fake.Webhook{Delivery, Type, Sender{Login, Bot, Association, Tier}, Object, FanOut, Repo, Subject, ContentRef, Facts, Time}`. `Emit(ctx, sink, ...)` delivers them, `Undelivered(...)` records deliveries only `Recover` will send, `Handler` accepts a POSTed Webhook (no signature; 202/200/503 as above, 405, 400). `Normalise` resolves the actor's tier from `Sender.Tier` or the Provider's trust rules (`group` through `Groups` + `ResolveGroup`, `authorAssociation`, `bots`; `workspaceMember` is not modelled), else `anyone`.
+- **Records:** `Projections()`, `Applies()` (every call, replays and failures included), `Effects()` (applied ones), `Mints()`, `Deliveries()`. `Apply` changes the objects for the ops a cascade observes (comments, labels, close, link-duplicate, create-issue, pr.open, sub-issue.add, pr.retarget, pr.merge, review.approve, thread.resolve); a replayed key returns the first result with `Replayed`; a failed Apply stores nothing, so the retry runs.
+- **Groups and tokens:** `SetTeam`, `SetOrgRole`, `SetUserGroup` feed `ResolveGroup`; `MintGitCredential` returns `fake-<identity>-<n>` scoped exactly as requested, TTL capped at 1 h. `SetHealth`; `FailNext(method, err)` injects one failure.
 
 ## HTTP API
 

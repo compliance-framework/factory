@@ -3856,6 +3856,15 @@ components:
         endedAt:
           type: string
           format: date-time
+        end:
+          description: End is how the run ended; empty while it runs.
+          type: string
+          enum:
+            - completed
+            - failed
+            - cancelled
+            - abandoned
+            - lost
         progress:
           description: Progress is a ring buffer of the latest progress events.
           type: array
@@ -4114,6 +4123,8 @@ components:
           type: object
         harness:
           $ref: '#/components/schemas/TaskHarness'
+        requires:
+          $ref: '#/components/schemas/Requires'
         skills:
           type: array
           items:

@@ -174,13 +174,16 @@ type Provenance struct {
 
 // TaskRunSpec is a Task's spec: the TaskSpec resolved for this work item.
 type TaskRunSpec struct {
-	TaskSpec    TaskSpecRef      `json:"taskSpec"`
-	Queue       string           `json:"queue"`
-	Pool        string           `json:"pool,omitzero"`
-	Provider    string           `json:"provider,omitzero"`
-	Target      *Target          `json:"target,omitzero"`
-	Inputs      map[string]any   `json:"inputs,omitzero"`
-	Harness     *TaskHarness     `json:"harness,omitzero"`
+	TaskSpec TaskSpecRef    `json:"taskSpec"`
+	Queue    string         `json:"queue"`
+	Pool     string         `json:"pool,omitzero"`
+	Provider string         `json:"provider,omitzero"`
+	Target   *Target        `json:"target,omitzero"`
+	Inputs   map[string]any `json:"inputs,omitzero"`
+	Harness  *TaskHarness   `json:"harness,omitzero"`
+	// Requires are the agent labels the task needs: the TaskSpec's requires merged with the
+	// dispatch's. The scheduler matches them against agent capabilities.
+	Requires    *Requires        `json:"requires,omitzero"`
 	Skills      []SkillRef       `json:"skills,omitzero"`
 	Prompt      *PromptRef       `json:"prompt,omitzero"`
 	Context     []ContextItem    `json:"context,omitzero"`
@@ -277,12 +280,26 @@ type RunSpec struct {
 type RunStatus struct {
 	StartedAt time.Time `json:"startedAt,omitzero"`
 	EndedAt   time.Time `json:"endedAt,omitzero"`
+	// End is how the run ended; empty while it runs.
+	End RunEnd `json:"end,omitzero" jsonschema:"enum=completed,enum=failed,enum=cancelled,enum=abandoned,enum=lost"`
 	// Progress is a ring buffer of the latest progress events.
 	Progress      []ProgressEvent `json:"progress,omitzero"`
 	Result        *Result         `json:"result,omitzero"`
 	TranscriptRef string          `json:"transcriptRef,omitzero"`
 	Usage         *Usage          `json:"usage,omitzero"`
 }
+
+// RunEnd is how a run ended.
+type RunEnd string
+
+// Run ends.
+const (
+	RunCompleted RunEnd = "completed" // the agent returned a Result (done, failed, needs_input or noop)
+	RunFailed    RunEnd = "failed"    // timeout, invalid result or infrastructure failure
+	RunCancelled RunEnd = "cancelled" // cancelled by a rule or command, and acknowledged
+	RunAbandoned RunEnd = "abandoned" // the agent gave the lease back (throttled, error, shutdown)
+	RunLost      RunEnd = "lost"      // the lease expired without a heartbeat
+)
 
 // ProgressEvent is one progress line streamed by the agent.
 type ProgressEvent struct {
