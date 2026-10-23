@@ -16,9 +16,11 @@
 # cloned anonymously at their tags: the git credential helper answers only for the task repo
 # and the ro repos, whatever publicReads says.
 #
-# Environment: the VM workspace brings local-dev's showcase up before the harness starts, at
+# Environment: the VM workspace brings local-dev's clean slate up before the harness starts, at
 # the train's versions (inputs.versions); the skills read its URLs from FACTORY_STACK_URL and
-# FACTORY_STACK_API. docs-review-verify declares the same environment: keep the two equal.
+# FACTORY_STACK_API. Not the showcase: its demo agents run GitHub plugins that need PATs, and no
+# credential goes into the workspace. docs-review-verify declares the same environment: keep the
+# two equal.
 kind: TaskSpec
 metadata: { name: release-docs }
 spec:
@@ -41,8 +43,9 @@ spec:
       - { ref: compliance-framework/local-dev@main, mode: ro }  # the environment (private: its own read token)
     hosts: [registry.yarnpkg.com, registry.npmjs.org]           # yarn install for the docs site
     environment:
-      # local-dev's showcase, up before the harness starts (P1 §4). The ro repos are under
-      # /work/ro/<name>; the scripts run as root in the VM, which has its own Docker.
+      # local-dev's clean slate, up before the harness starts (P1 §4). The ro repos are under
+      # /work/ro/<name>; the scripts run as the run's user (admin, in the docker group) in the
+      # VM, which has its own Docker.
       versions: { from: inputs, input: versions }
       setup: |
         corepack enable
@@ -50,28 +53,22 @@ spec:
         cd /work/ro/local-dev
         [ -f .env ] || cp .env.example .env       # the Makefile includes .env
         export COMPOSE_COMMAND="docker compose"   # local-dev's default is podman-compose
-        # FACTORY_VERSION_API/_UI/_AGENT (the train's api, ui and agent releases) pin local-dev's
-        # CCF_API_IMAGE, CCF_UI_IMAGE and CCF_AGENT_VERSION, without the release's v; the
-        # components not set keep local-dev's file pins. CCF_IMAGES=file, as latest (local-dev's
-        # default, which applies when none is set) would replace the pins.
-        if [ -n "${FACTORY_VERSION_API:-}${FACTORY_VERSION_UI:-}${FACTORY_VERSION_AGENT:-}" ]; then
-          export CCF_IMAGES=file
-          [ -z "${FACTORY_VERSION_API:-}" ] || export CCF_API_IMAGE="ghcr.io/compliance-framework/api:${FACTORY_VERSION_API#v}"
-          [ -z "${FACTORY_VERSION_UI:-}" ] || export CCF_UI_IMAGE="ghcr.io/compliance-framework/ui:${FACTORY_VERSION_UI#v}"
-          [ -z "${FACTORY_VERSION_AGENT:-}" ] || export CCF_AGENT_VERSION="${FACTORY_VERSION_AGENT#v}"
-        fi
-        # demo-up-showcase without its build (every demo image, from sibling checkouts) and its
-        # GitHub credentials check (P1 Phase 0 report, Q3).
-        make todo-agent-env
-        ./scripts/do start_showcase
-        # create-user races the API's migrations on a fresh stack (the same report): the seeding
-        # is idempotent, so a failed first pass is retried once.
-        make demo-up-showcase-load || make demo-up-showcase-load
-        make showcase-kind register-todo-agent
+        # CCF_IMAGES=file: local-dev's file pins, as latest (its default) would look every release
+        # up on api.github.com and replace the pins. FACTORY_VERSION_API/_UI/_AGENT (the train's
+        # api, ui and agent releases) pin CCF_API_IMAGE, CCF_UI_IMAGE and CCF_AGENT_VERSION,
+        # without the release's v; the components not set keep the file pins.
+        export CCF_IMAGES=file
+        [ -z "${FACTORY_VERSION_API:-}" ] || export CCF_API_IMAGE="ghcr.io/compliance-framework/api:${FACTORY_VERSION_API#v}"
+        [ -z "${FACTORY_VERSION_UI:-}" ] || export CCF_UI_IMAGE="ghcr.io/compliance-framework/ui:${FACTORY_VERSION_UI#v}"
+        [ -z "${FACTORY_VERSION_AGENT:-}" ] || export CCF_AGENT_VERSION="${FACTORY_VERSION_AGENT#v}"
+        # postgres, api, ui, smtp4dev and one bare agent (slate-agent, no plugins): no kind
+        # cluster, no showcase data. create-user races the API's migrations on a fresh stack (P1
+        # Phase 0 report, Q3): every step is idempotent, so a failed first pass is retried once.
+        make demo-up-slate || make demo-up-slate
       exposes: { FACTORY_STACK_URL: "http://localhost:8000", FACTORY_STACK_API: "http://localhost:8080" }
       ready: { http: ["http://localhost:8080/api/health", "http://localhost:8000/"], timeout: 20m }
       down: |
-        COMPOSE_COMMAND="docker compose" make -C /work/ro/local-dev compose-down-showcase
+        COMPOSE_COMMAND="docker compose" make -C /work/ro/local-dev compose-down-slate
   identity: author
   permissions: { contents: write, pull_requests: write, issues: read }
   effects: { allow: [push-branch, pr.open, pr.comment, label.add], labels: [documentation] }

@@ -150,7 +150,7 @@ var docsHosts = []string{"registry.yarnpkg.com", "registry.npmjs.org"}
 //     prompt-injected run could reach: such a change needs two approvals, FACTORY-CAT-002);
 //   - no TaskSpec sets publicReads: true, as the repos they read (local-dev, and ccf-skills
 //     for the skills) are private and need their read-only tokens;
-//   - only release-docs and docs-review-verify bring an environment up (local-dev's showcase),
+//   - only release-docs and docs-review-verify bring an environment up (local-dev's clean slate),
 //     the same one.
 func TestWorkspace(t *testing.T) {
 	c := load(t)
